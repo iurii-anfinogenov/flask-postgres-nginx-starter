@@ -1,0 +1,12 @@
+[Unit]
+Description=Gunicorn instance to serve myapp
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/minimal_flask_stack
+ExecStart=/usr/bin/gunicorn --workers 1 --bind 127.0.0.1:8000 app:app
+
+[Install]
+WantedBy=multi-user.target
