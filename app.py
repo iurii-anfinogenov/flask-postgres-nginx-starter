@@ -1,69 +1,106 @@
 import os
-from flask import Flask
+from flask import Flask, render_template, request, redirect, url_for
 import psycopg2
+from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-# 1. Загрузка переменных окружения из .env (при наличии)
+# Load environment variables from .env
 load_dotenv()
 
-# 2. Чтение переменных с fallback-значениями
-DB_NAME     = os.getenv("DB_NAME", "myapp")
-DB_USER     = os.getenv("DB_USER", "appuser")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "secret")
-DB_HOST     = os.getenv("DB_HOST", "localhost")
-DB_PORT     = os.getenv("DB_PORT", "5432")
-SECRET_KEY  = os.getenv("SECRET_KEY", "fallback_secret")
+# Database connection parameters from .env
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+# Flask secret key
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret")
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = SECRET_KEY
 
 def get_conn():
-    conn_str = (
-        f"dbname={DB_NAME} user={DB_USER} "
-        f"password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
+    """
+    Establish a new database connection using parameters from environment.
+    """
+    return psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
     )
-    return psycopg2.connect(conn_str)
+
 
 def init_db():
-    try:
-        with get_conn() as conn:
-            cur = conn.cursor()
+    """
+    Create the notes table and ensure created_at column exists.
+    """
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            # Create table if it doesn't exist
             cur.execute(
-                "CREATE TABLE IF NOT EXISTS notes ("
-                "id SERIAL PRIMARY KEY, content TEXT);"
+                """
+                CREATE TABLE IF NOT EXISTS notes (
+                    id SERIAL PRIMARY KEY,
+                    content TEXT NOT NULL
+                );
+                """
             )
-            conn.commit()
-    except Exception as e:
-        app.logger.error(f"DB init error: {e}")
+            # Add created_at column if missing
+            cur.execute(
+                """
+                ALTER TABLE notes
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+                """
+            )
+    conn.close()
 
-# Инициализация БД при старте
-init_db()
 
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    try:
-        with get_conn() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT content FROM notes;")
-            rows = cur.fetchall()
-        return '<br>'.join(row[0] for row in rows)
-    except Exception as e:
-        return f"Error fetching notes: {e}", 500
+    if request.method == 'POST':
+        content = request.form.get('content', '').strip()
+        if content:
+            conn = get_conn()
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'INSERT INTO notes (content) VALUES (%s);',
+                        (content,)
+                    )
+            conn.close()
+        return redirect(url_for('index'))
 
-@app.route('/add/<text>')
-def add(text):
-    try:
-        with get_conn() as conn:
-            cur = conn.cursor()
+    conn = get_conn()
+    with conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "INSERT INTO notes (content) VALUES (%s);",
-                (text,)
+                'SELECT id, content, created_at FROM notes ORDER BY created_at DESC;'
             )
-            conn.commit()
-        return f"Added: {text}"
-    except Exception as e:
-        return f"Error adding note: {e}", 500
+            notes = cur.fetchall()
+    conn.close()
+
+    return render_template('index.html', notes=notes)
+
+
+@app.route('/delete/<int:note_id>', methods=['POST'])
+def delete_note(note_id):
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM notes WHERE id = %s;', (note_id,))
+    conn.close()
+    return redirect(url_for('index'))
+
 
 if __name__ == '__main__':
-    # Режим разработки; в продакшн используем Gunicorn
-    app.run(host='0.0.0.0', port=5000)
+    # Initialize database if needed
+    init_db()
+    # Start Flask development server
+    app.run(
+        host='0.0.0.0',
+        port=int(os.getenv('PORT', 5000)),
+        debug=True
+    )

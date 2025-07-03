@@ -12,6 +12,7 @@
 ```sh
 flask-postgres-nginx-starter/
 ├── app.py
+├── .env.example
 ├── requirements.txt
 ├── README.md
 └── config/
@@ -44,7 +45,11 @@ CREATE USER appuser WITH PASSWORD 'secret';
 GRANT ALL PRIVILEGES ON DATABASE myapp TO appuser;
 \q
 EOF
+```
+На основе файла .env.example подготовить файл .env, где укзаать нужные переменные.
 
+```sh
+cp .env.example .env
 ```
 2. Развёртывание приложения
 

@@ -1,0 +1,25 @@
+[Unit]
+Description=Gunicorn instance to serve flask-postgres-nginx-starter
+After=network.target
+
+[Service]
+# Под каким пользователем и группой будет работать процесс
+User=www-data
+Group=www-data
+
+# Рабочая директория — корень проекта
+WorkingDirectory=/opt/flask-postgres-nginx-starter
+
+# Загрузка переменных окружения из .env (чтобы gunicorn.conf.py увидел GUNICORN_* и др.)
+EnvironmentFile=/opt/flask-postgres-nginx-starter/.env
+
+# Исполняемый бинарь Gunicorn из venv и указание конфига
+ExecStart=/opt/flask-postgres-nginx-starter/venv/bin/gunicorn \
+  --config /opt/flask-postgres-nginx-starter/gunicorn.conf.py \
+  app:app
+
+# Перезапускать в случае падения
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
