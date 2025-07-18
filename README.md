@@ -1,9 +1,10 @@
-# Flask-Postgres-Nginx-Starter
+# Flask-Postgres-Nginx-Starter (расширенная версия)
 
-Минимальный шаблон для развёртывания трёхуровневого веб-стека:
-- **PostgreSQL** – уровень хранения данных
-- **Flask (Gunicorn)** – прикладной уровень (WSGI-сервер)
-- **Nginx** – обратный прокси, балансировка нагрузки
+Минимальный, но гибкий шаблон для развёртывания трёхуровневого веб-стека:
+
+* **PostgreSQL** – уровень хранения данных
+* **Flask (Gunicorn)** – прикладной уровень (WSGI-сервер)
+* **Nginx** – обратный прокси и балансировщик нагрузки
 
 ---
 
@@ -12,33 +13,37 @@
 ```sh
 flask-postgres-nginx-starter/
 ├── app.py
-├── .env.example
-├── requirements.txt
+├── config
+│   ├── flask-postgres.service
+│   ├── nginx.socket.conf       # Nginx через Unix-сокет (рекомендуется)
+│   └── nginx.tcp.conf          # Nginx через TCP-порт (для отладки)
+├── gunicorn.conf.py
 ├── README.md
-└── config/
-    ├── gunicorn.service
-    └── myapp.nginx
-
+├── requirements.txt
+└── templates
+    └── index.html
 ```
 
-- **app.py** — самое простое Flask-приложение с сохранением/чтением записей из PostgreSQL.
-- **requirements.txt** — зависимости Python.
-- **config/gunicorn.service** — unit-файл systemd для запуска Gunicorn.
-- **config/myapp.nginx** — конфигурация Nginx для проксирования запросов.
+* **app.py** — минимальное Flask-приложение с чтением и записью данных в PostgreSQL.
+* **requirements.txt** — зависимости Python.
+* **config/flask-postgres.service** — unit-файл systemd для запуска Gunicorn.
+* **config/nginx.socket.conf** — конфигурация Nginx для подключения по Unix-сокету.
+* **config/nginx.tcp.conf** — конфигурация Nginx для подключения по TCP.
 
 ---
 
-## 🔧 Предварительные требования
+## 🔧 Установка и настройка
 
-На Ubuntu/Debian-&-похожих:
+### 1. Зависимости
+
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip postgresql nginx
+```
 
-1. Настройка базы данных
+### 2. Настройка PostgreSQL
 
-    Переключитесь на пользователя postgres и создайте базу и роль:
-```sh
+```bash
 sudo -u postgres psql <<EOF
 CREATE DATABASE myapp;
 CREATE USER appuser WITH PASSWORD 'secret';
@@ -46,105 +51,173 @@ GRANT ALL PRIVILEGES ON DATABASE myapp TO appuser;
 \q
 EOF
 ```
-На основе файла .env.example подготовить файл .env, где укзаать нужные переменные.
 
-```sh
-cp .env.example .env
-```
-2. Развёртывание приложения
+### 3. Клонирование проекта
 
-Клонируйте репозиторий и перейдите в папку:
-
-```sh
+```bash
 git clone https://github.com/your-org/flask-postgres-nginx-starter.git
 cd flask-postgres-nginx-starter
+cp .env.example .env
 ```
-Создайте и активируйте виртуальное окружение:
-```sh
+
+### 4. Установка Python-зависимостей
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
-```
-Установите зависимости
-```sh
 pip install -r requirements.txt
 ```
 
-Быстрый запуск для разработки
+### 5. Тестовый запуск
 
-```sh
+```bash
 python3 app.py
 ```
 
-Откройте в браузере http://localhost:5000.
-Маршрут /add/<текст> добавляет запись, / выводит все записи.
+Откройте в браузере: [http://localhost:5000](http://localhost:5000)
 
+---
 
-3. Продакшн-развёртывание
-3.1 Gunicorn + systemd
+## 🚀 Развёртывание в продакшене
 
-    Скопируйте файл config/gunicorn.service в /etc/systemd/system/myapp.service:
+### Вариант A: Gunicorn + сокет + NGINX (рекомендуется)
+
+#### 1. Конфигурация Gunicorn (`gunicorn.conf.py`)
+
+```python
+import multiprocessing
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+USE_TCP = os.getenv("GUNICORN_USE_TCP", "false").lower() == "true"
+
+bind = os.getenv("GUNICORN_BIND", "127.0.0.1:8000") if USE_TCP else \
+       f'unix:{BASE_DIR / "flask-postgres.sock"}'
+
+workers = multiprocessing.cpu_count() * 2 + 1
+accesslog = os.getenv("GUNICORN_ACCESS_LOG", str(BASE_DIR / "log/access.log"))
+errorlog = os.getenv("GUNICORN_ERROR_LOG", str(BASE_DIR / "log/error.log"))
+loglevel = os.getenv("GUNICORN_LOG_LEVEL", "info")
+user = os.getenv("GUNICORN_USER", os.getenv("USER"))
+group = os.getenv("GUNICORN_GROUP", user)
+```
+
+> 📌 Благодаря `os.getenv("USER")` запуск возможен без хардкода имени пользователя, работает на любой машине.
+
+#### 2. Права на сокет и директории логов
+
+Убедитесь, что:
+
+* директория `log/` существует и доступна для записи
+* сокет создаётся с правами, позволяющими Nginx читать его (например, `chmod 770` и группа `www-data`)
+
+> 🔐 Лучше использовать `/opt/` и `www-data`:
+>
+> ```bash
+> sudo chown -R www-data:www-data /opt/flask-postgres-nginx-starter
+> ```
+
+#### 3. systemd unit-файл `/etc/systemd/system/myapp.service`
+
 ```ini
 [Unit]
-Description=Gunicorn instance to serve myapp
+Description=Gunicorn instance to serve flask-postgres-nginx-starter
 After=network.target
 
 [Service]
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/flask-postgres-nginx-starter
-ExecStart=/usr/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
+EnvironmentFile=/opt/flask-postgres-nginx-starter/.env
+ExecStart=/opt/flask-postgres-nginx-starter/venv/bin/gunicorn \
+  --config /opt/flask-postgres-nginx-starter/gunicorn.conf.py \
+  app:app
+Restart=always
+RestartSec=5
+Type=simple
 
 [Install]
 WantedBy=multi-user.target
 ```
-Активируйте и запустите сервис:
-```sh
-sudo systemctl daemon-reload
-sudo systemctl start myapp
-sudo systemctl enable myapp
-```
-Проверьте статус:
-```sh
-sudo systemctl status myapp
-```
 
-3.2 Nginx
-
-    Скопируйте config/myapp.nginx в /etc/nginx/sites-available/myapp:
+#### 4. Nginx (используйте `config/nginx.socket.conf`)
 
 ```nginx
 server {
     listen 80;
-    server_name example.com;  # замените на ваш домен или IP
+    server_name _;
+
+    location / {
+        include proxy_params;
+        proxy_pass http://unix:/opt/flask-postgres-nginx-starter/flask-postgres.sock;
+    }
+
+    access_log /var/log/nginx/flask-postgres.access.log;
+    error_log  /var/log/nginx/flask-postgres.error.log;
+}
+```
+
+> ⚠️ Убедитесь, что путь к `.sock` совпадает с `bind` в `gunicorn.conf.py`
+
+### Вариант B: Gunicorn через TCP-порт (отладка)
+
+#### systemd:
+
+```ini
+ExecStart=/opt/flask-postgres-nginx-starter/venv/bin/gunicorn \
+  --bind 127.0.0.1:8000 \
+  --config /opt/flask-postgres-nginx-starter/gunicorn.conf.py \
+  app:app
+```
+
+#### Nginx (используйте `config/nginx.tcp.conf`):
+
+```nginx
+server {
+    listen 80;
+    server_name _;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        include proxy_params;
     }
 }
 ```
-Включите сайт и перезагрузите Nginx:
-```sh
-sudo ln -s /etc/nginx/sites-available/myapp /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-📑 Логи и отладка
 
-    Gunicorn:
-```sh
+---
+
+## ✅ Что выбрать?
+
+| Сценарий          | Рекомендуемый способ      |
+| ----------------- | ------------------------- |
+| Продакшен         | Unix-сокет + Nginx        |
+| Локальная отладка | TCP-порт (127.0.0.1:8000) |
+
+Сокет даёт выше производительность и безопасность, но требует настройки прав. TCP — проще для первого запуска и дебага.
+
+---
+
+## 📊 Мониторинг и отладка
+
+```bash
+sudo systemctl status myapp
 sudo journalctl -u myapp -f
+sudo tail -f /var/log/nginx/*.log
+sudo tail -f log/*.log
 ```
-🔍 Возможные расширения
 
-    Подключить HTTPS через Let's Encrypt (certbot --nginx).
+---
 
-    Добавить Docker-файлы для контейнеризации.
+## 🔍 Возможные расширения
 
-    Ввести переменные окружения и .env-файл (например, с python-decouple).
+* Подключение HTTPS через Let's Encrypt (certbot --nginx)
+* Контейнеризация с помощью Docker или Podman
+* Поддержка .env переменных через python-dotenv или decouple
+* Добавление CI/CD пайплайнов (GitHub Actions, GitLab CI)
+* Фронтенд-интеграция: React, Vue, HTMX, Bootstrap
+* Метрики: Prometheus exporter, логирование в JSON и системные лог-сервисы
 
-    Расширить приложение фронтом на React/Vue.
+---
 
-
+**Авторский комментарий:** этот шаблон — основа продакшен-развёртывания для начинающего разработчика. Практикуйтесь с разными типами запуска, изучайте systemd и работу сокетов — это основа надёжного бэкенда.
