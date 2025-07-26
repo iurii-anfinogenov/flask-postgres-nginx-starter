@@ -1,0 +1,60 @@
+---
+- name: Развёртывание Flask-приложения без Docker
+  hosts: web
+  become: true
+
+  vars:
+    app_dir: /opt/flask-app
+    repo_url: https://github.com/iurii-anfinogenov/flask-postgres-nginx-starter.git
+    repo_branch: main
+
+  tasks:
+
+    - name: Убедиться, что необходимые пакеты установлены
+      apt:
+        name:
+          - git
+          - python3
+          - python3-pip
+          - python3-venv
+          - nginx
+        update_cache: true
+
+    - name: Клонировать код приложения
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_branch }}"
+        force: yes
+
+    - name: Установить зависимости из requirements.txt
+      pip:
+        requirements: "{{ app_dir }}/requirements.txt"
+        virtualenv: "{{ app_dir }}/venv"
+        virtualenv_command: python3 -m venv
+
+    - name: Копировать .env файл
+      copy:
+        src: files/env.example
+        dest: "{{ app_dir }}/.env"
+        mode: '0600'
+
+    - name: Установить systemd unit для gunicorn
+      template:
+        src: templates/gunicorn.service.j2
+        dest: /etc/systemd/system/gunicorn.service
+      notify:
+        - Перезапустить gunicorn
+
+    - name: Убедиться, что nginx работает
+      service:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Перезапустить gunicorn
+      systemd:
+        name: gunicorn
+        state: restarted
+        enabled: true
