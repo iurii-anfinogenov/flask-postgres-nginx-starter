@@ -1,3 +1,4 @@
+
 import os
 from flask import Flask, render_template, request, redirect, url_for
 import psycopg2
@@ -94,10 +95,9 @@ def delete_note(note_id):
     conn.close()
     return redirect(url_for('index'))
 
-
+# Initialize database if needed
+init_db()
 if __name__ == '__main__':
-    # Initialize database if needed
-    init_db()
     # Start Flask development server
     app.run(
         host='0.0.0.0',
